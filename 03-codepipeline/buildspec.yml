@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Starting CodePipeline build"
+      - cd 03-codepipeline
+      - pwd
+      - ls -la
+
+  build:
+    commands:
+      - echo "Deploying to S3"
+      - aws s3 sync . s3://serhii-cicd-test-984263476780 --delete --exclude "README.md" --exclude "buildspec.yml"
+
+  post_build:
+    commands:
+      - echo "Deployment completed"
+
+artifacts:
+  base-directory: 03-codepipeline
+  files:
+    - '**/*'
