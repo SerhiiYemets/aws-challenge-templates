@@ -8,17 +8,20 @@ phases:
   pre_build:
     commands:
       - echo "Pre-build phase"
+      - cd 02-codebuild
+      - pwd
+      - ls -la
 
   build:
     commands:
       - echo "Build phase"
-      - ls -la 02-codebuild
-      - grep "AWS CodeBuild works!" 02-codebuild/index.html
+      - grep "AWS CodeBuild works!" index.html
 
   post_build:
     commands:
       - echo "Build completed successfully"
 
 artifacts:
+  base-directory: 02-codebuild
   files:
-    - 02-codebuild/index.html
+    - index.html
