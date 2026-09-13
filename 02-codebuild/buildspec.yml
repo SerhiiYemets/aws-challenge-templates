@@ -12,8 +12,8 @@ phases:
   build:
     commands:
       - echo "Build phase"
-      - ls -la
-      - grep "AWS CodeBuild works!" index.html
+      - ls -la 02-codebuild
+      - grep "AWS CodeBuild works!" 02-codebuild/index.html
 
   post_build:
     commands:
@@ -21,4 +21,4 @@ phases:
 
 artifacts:
   files:
-    - index.html
+    - 02-codebuild/index.html
