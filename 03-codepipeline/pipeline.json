@@ -1,0 +1,67 @@
+{
+  "pipeline": {
+    "name": "challenge-codepipeline",
+    "roleArn": "arn:aws:iam::984263476780:role/codepipeline-challenge-role",
+    "artifactStore": {
+      "type": "S3",
+      "location": "serhii-codepipeline-artifacts-984263476780"
+    },
+    "stages": [
+      {
+        "name": "Source",
+        "actions": [
+          {
+            "name": "GitHubSource",
+            "actionTypeId": {
+              "category": "Source",
+              "owner": "AWS",
+              "provider": "CodeStarSourceConnection",
+              "version": "1"
+            },
+            "runOrder": 1,
+            "configuration": {
+              "ConnectionArn": "arn:aws:codestar-connections:eu-central-1:984263476780:connection/0c4df298-af41-47ae-a1fe-64065eda5e17",
+              "FullRepositoryId": "SerhiiYemets/aws-challenge-templates",
+              "BranchName": "main",
+              "DetectChanges": "true"
+            },
+            "outputArtifacts": [
+              {
+                "name": "SourceOutput"
+              }
+            ],
+            "inputArtifacts": []
+          }
+        ]
+      },
+      {
+        "name": "Build",
+        "actions": [
+          {
+            "name": "CodeBuild",
+            "actionTypeId": {
+              "category": "Build",
+              "owner": "AWS",
+              "provider": "CodeBuild",
+              "version": "1"
+            },
+            "runOrder": 1,
+            "configuration": {
+              "ProjectName": "challenge-codepipeline-build"
+            },
+            "outputArtifacts": [
+              {
+                "name": "BuildOutput"
+              }
+            ],
+            "inputArtifacts": [
+              {
+                "name": "SourceOutput"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
