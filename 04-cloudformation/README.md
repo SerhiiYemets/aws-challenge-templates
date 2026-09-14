@@ -52,33 +52,6 @@ text
                    Max: 4
 
 
-Network architecture:
-
-
-
-text
-
-
-VPC ├──  Public Subnet 1
-│   ├── ALB
-│   └── NAT Gateway
-│
-├──  Public Subnet 
-│   └── ALB
-│
-├──  Private Subnet 1
-│   ├── EC2
-│   ├── RDS
-│   └── EFS Mount Target
-│
-└──  Private Subnet 2
-    ├── EC2
-    ├── RDS
-    └── EFS Mount Target
-
-
----
-
 ## Main template
 
 text
