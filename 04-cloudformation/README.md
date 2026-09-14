@@ -55,6 +55,8 @@ text
 Network architecture:
 
 text
+
+
 VPC
 ├── Public Subnet 1
 │   ├── ALB
