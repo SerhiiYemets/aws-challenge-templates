@@ -24,7 +24,10 @@ Verified:
 
 ## Architecture
 
-page
+text
+
+
+
                          Internet
                             |
                             v
