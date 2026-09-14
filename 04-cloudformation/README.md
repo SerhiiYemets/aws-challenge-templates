@@ -62,19 +62,19 @@ text
 VPC
 
 
-├── Public Subnet 1
+├──  Public Subnet 1
 │   ├── ALB
 │   └── NAT Gateway
 │
-├── Public Subnet 2
+├──  Public Subnet 2
 │   └── ALB
 │
-├── Private Subnet 1
+├──  Private Subnet 1
 │   ├── EC2
 │   ├── RDS
 │   └── EFS Mount Target
 │
-└── Private Subnet 2
+└──  Private Subnet 2
     ├── EC2
     ├── RDS
     └── EFS Mount Target
