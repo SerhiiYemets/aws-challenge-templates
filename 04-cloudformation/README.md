@@ -63,11 +63,14 @@ VPC
 
 
 ├──  Public Subnet 1
+
 │   ├── ALB
 │   └── NAT Gateway
+
 │
-├──  Public Subnet 2
+├──  Public Subnet 
 │   └── ALB
+
 │
 ├──  Private Subnet 1
 │   ├── EC2
