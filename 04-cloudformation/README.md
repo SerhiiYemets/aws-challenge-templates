@@ -54,10 +54,14 @@ text
 
 Network architecture:
 
+
+
 text
 
 
 VPC
+
+
 ├── Public Subnet 1
 │   ├── ALB
 │   └── NAT Gateway
@@ -81,6 +85,7 @@ VPC
 ## Main template
 
 text
+
 gitea-full.yml
 
 
