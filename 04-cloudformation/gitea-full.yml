@@ -1,0 +1,749 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Full Gitea infrastructure for AWS Challenge training
+
+Parameters:
+  NamePrefix:
+    Type: String
+    Default: challenge-gitea
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.0.1.0/24
+
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.0.2.0/24
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.0.11.0/24
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.0.12.0/24
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+  DBName:
+    Type: String
+    Default: gitea
+
+  DBUsername:
+    Type: String
+    Default: giteaadmin
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+  # ============================================================
+  # VPC
+  # ============================================================
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ============================================================
+  # SUBNETS
+  # ============================================================
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-pub-sub1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-pub-sub2'
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-priv-sub1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-priv-sub2'
+
+  # ============================================================
+  # NAT + ROUTING
+  # ============================================================
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-nat'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-public-rt'
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-private-rt'
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ============================================================
+  # SECURITY GROUPS
+  # ============================================================
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP to ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-alb-sg'
+
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from ALB and SSH
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-ec2-sg'
+
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL from EC2
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref Ec2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-rds-sg'
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS from EC2
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref Ec2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-efs-sg'
+
+  # ============================================================
+  # APPLICATION LOAD BALANCER
+  # ============================================================
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${NamePrefix}-alb'
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${NamePrefix}-tg'
+      VpcId: !Ref VPC
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+      Matcher:
+        HttpCode: '200-399'
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ============================================================
+  # RDS MYSQL
+  # ============================================================
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Gitea
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  GiteaDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub '${NamePrefix}-db'
+
+      Engine: mysql
+      DBInstanceClass: !Ref DBInstanceClass
+
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroup
+
+      PubliclyAccessible: false
+      MultiAZ: false
+
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+
+  # ============================================================
+  # EFS
+  # ============================================================
+
+  GiteaFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-efs'
+
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref GiteaFileSystem
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref GiteaFileSystem
+      SubnetId: !Ref PrivateSubnet2
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  # ============================================================
+  # IAM FOR EC2
+  # ============================================================
+
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${NamePrefix}-ec2-role'
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${NamePrefix}-instance-profile'
+      Roles:
+        - !Ref Ec2Role
+
+  # ============================================================
+  # LAUNCH TEMPLATE
+  # ============================================================
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${NamePrefix}-launch-template'
+
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+
+        InstanceType: !Ref InstanceType
+
+        IamInstanceProfile:
+          Name: !Ref Ec2InstanceProfile
+
+        SecurityGroupIds:
+          - !Ref Ec2SecurityGroup
+
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${NamePrefix}-instance'
+
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -eux
+
+            dnf update -y
+
+            dnf install -y \
+              docker \
+              amazon-efs-utils
+
+            systemctl enable docker
+            systemctl start docker
+
+            mkdir -p /opt/gitea
+
+            echo "${GiteaFileSystem}:/ /opt/gitea efs _netdev,tls 0 0" >> /etc/fstab
+
+            for i in {1..20}; do
+              if mount -a; then
+                break
+              fi
+
+              sleep 10
+            done
+
+            mountpoint -q /opt/gitea
+
+            chmod 777 /opt/gitea
+
+            curl -L \
+              https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+              -o /usr/local/bin/docker-compose
+
+            chmod +x /usr/local/bin/docker-compose
+
+            cat > /opt/docker-compose.yml <<'COMPOSE'
+            version: "3.8"
+
+            services:
+              gitea:
+                image: gitea/gitea:latest
+                container_name: gitea
+                restart: always
+
+                environment:
+                  - USER_UID=1000
+                  - USER_GID=1000
+
+                  - GITEA__database__DB_TYPE=mysql
+                  - GITEA__database__HOST=${GiteaDatabase.Endpoint.Address}:3306
+                  - GITEA__database__NAME=${DBName}
+                  - GITEA__database__USER=${DBUsername}
+                  - GITEA__database__PASSWD=${DBPassword}
+
+                  - GITEA__server__HTTP_PORT=3000
+                  - GITEA__server__ROOT_URL=http://${ApplicationLoadBalancer.DNSName}/
+
+                volumes:
+                  - /opt/gitea:/data
+
+                ports:
+                  - "80:3000"
+            COMPOSE
+
+            cd /opt
+
+            /usr/local/bin/docker-compose \
+              -f docker-compose.yml \
+              up -d
+
+  # ============================================================
+  # AUTO SCALING GROUP
+  # ============================================================
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT5M
+        WaitOnResourceSignals: false
+
+    DependsOn:
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - GiteaDatabase
+      - HttpListener
+
+    Properties:
+      AutoScalingGroupName: !Sub '${NamePrefix}-asg'
+
+      MinSize: '2'
+      DesiredCapacity: '2'
+      MaxSize: '4'
+
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+      TargetGroupARNs:
+        - !Ref TargetGroup
+
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${NamePrefix}-instance'
+          PropagateAtLaunch: true
+
+  # ============================================================
+  # AUTO SCALING POLICY
+  # ============================================================
+
+  ScalePolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+
+      PolicyType: TargetTrackingScaling
+
+      TargetTrackingConfiguration:
+        TargetValue: 10
+
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+
+          ResourceLabel: !Sub
+            - '${LoadBalancerFullName}/${TargetGroupFullName}'
+            - LoadBalancerFullName: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+              TargetGroupFullName: !GetAtt TargetGroup.TargetGroupFullName
+
+  # ============================================================
+  # CLOUDWATCH DASHBOARD
+  # ============================================================
+
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${NamePrefix}-dashboard'
+
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS CPU Utilization",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [
+                    "AWS/RDS",
+                    "CPUUtilization",
+                    "DBInstanceIdentifier",
+                    "${GiteaDatabase}"
+                  ]
+                ],
+                "period": 60,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "RDS Database Connections",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [
+                    "AWS/RDS",
+                    "DatabaseConnections",
+                    "DBInstanceIdentifier",
+                    "${GiteaDatabase}"
+                  ]
+                ],
+                "period": 60,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ALB Healthy Hosts",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [
+                    "AWS/ApplicationELB",
+                    "HealthyHostCount",
+                    "LoadBalancer",
+                    "${ApplicationLoadBalancer.LoadBalancerFullName}",
+                    "TargetGroup",
+                    "${TargetGroup.TargetGroupFullName}"
+                  ]
+                ],
+                "period": 60,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ALB Request Count",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [
+                    "AWS/ApplicationELB",
+                    "RequestCount",
+                    "LoadBalancer",
+                    "${ApplicationLoadBalancer.LoadBalancerFullName}"
+                  ]
+                ],
+                "period": 60,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "EFS Client Connections",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [
+                    "AWS/EFS",
+                    "ClientConnections",
+                    "FileSystemId",
+                    "${GiteaFileSystem}"
+                  ]
+                ],
+                "period": 60,
+                "stat": "Average"
+              }
+            }
+          ]
+        }
+
+Outputs:
+
+  VpcId:
+    Value: !Ref VPC
+
+  PublicSubnet1Id:
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2Id:
+    Value: !Ref PublicSubnet2
+
+  PrivateSubnet1Id:
+    Value: !Ref PrivateSubnet1
+
+  PrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+
+  LoadBalancerDnsName:
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  LoadBalancerUrl:
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'
+
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+
+  DatabaseEndpoint:
+    Value: !GetAtt GiteaDatabase.Endpoint.Address
+
+  DatabasePort:
+    Value: !GetAtt GiteaDatabase.Endpoint.Port
+
+  FileSystemId:
+    Value: !Ref GiteaFileSystem
+
+  DashboardName:
+    Value: !Ref CloudWatchDashboard
