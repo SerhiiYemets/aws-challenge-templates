@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Challenge reusable Launch Template and Auto Scaling Group
+
+Parameters:
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+
+  Ec2SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  TargetGroupArn:
+    Type: String
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: challenge-ec2-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: challenge-instance-profile
+      Roles:
+        - !Ref Ec2Role
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: challenge-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+
+        InstanceType: !Ref InstanceType
+
+        IamInstanceProfile:
+          Name: !Ref Ec2InstanceProfile
+
+        SecurityGroupIds:
+          - !Ref Ec2SecurityGroupId
+
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -eux
+
+            dnf update -y
+            dnf install -y docker
+
+            systemctl enable docker
+            systemctl start docker
+
+            docker pull nginx:alpine
+
+            docker run -d \
+              --name challenge-web \
+              --restart unless-stopped \
+              -p 80:80 \
+              nginx:alpine
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: challenge-asg-instance
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: challenge-asg
+
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+
+      TargetGroupARNs:
+        - !Ref TargetGroupArn
+
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 180
+
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+
+      Tags:
+        - Key: Name
+          Value: challenge-asg-instance
+          PropagateAtLaunch: true
+
+Outputs:
+
+  LaunchTemplateId:
+    Value: !Ref LaunchTemplate
+
+  AutoScalingGroupName:
+    Value: !Ref AutoScalingGroup
+
+  InstanceProfileName:
+    Value: !Ref Ec2InstanceProfile
+
+  Ec2RoleArn:
+    Value: !GetAtt Ec2Role.Arn
